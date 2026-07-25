@@ -45,6 +45,26 @@ CVE-2026-25087
 # Drop this once the base image's wheels rebuild against pyo3 >=0.29.0.
 GHSA-36hh-v3qg-5jq4
 
+# GHSA-4w2j-m93h-cj5j - quinn-proto remote memory exhaustion from unbounded
+# out-of-order QUIC stream reassembly (HIGH; fixed in 0.11.15).
+#
+# Same shape as the pyo3 entry above: quinn-proto is a Rust QUIC crate
+# *compiled into* py-rattler's native extension
+#   opt/conda/lib/python3.13/site-packages/rattler/rattler.abi3.so
+# (Trivy reads it as a `rustbinary`). rattler is the Rust conda-package
+# library baked into the base image's conda env; quinn-proto is not a
+# pip-installable package we pin or can `pip upgrade` — the fix only arrives
+# when rattler's wheel rebuilds against quinn-proto >=0.11.15. It hit every
+# flavor (incl. -small) because it lives in the base conda env, and entered
+# Trivy's DB between the 07-24 (green) and 07-25 (red) nightly runs. The flaw
+# is a QUIC-peer DoS reachable only when rattler opens a QUIC/HTTP3 connection
+# to a malicious conda channel; rattler is an environment-management tool that
+# nothing in these notebooks invokes at runtime, so the path is unreachable.
+#
+# Drop once the base image's rattler wheel rebuilds against quinn-proto
+# >=0.11.15 (a base digest bump will likely clear this together with pyo3).
+GHSA-4w2j-m93h-cj5j
+
 # CVE-2026-54512 / CVE-2026-54513 - jackson-databind unsafe-polymorphic
 # deserialization gadgets (both HIGH; PolymorphicTypeValidator bypass and
 # array-subtype allowlist bypass respectively; fixed in 2.18.8/2.21.4/3.1.4).
