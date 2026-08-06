@@ -101,3 +101,19 @@ CVE-2026-54513
 # Drop once Ray rebundles jackson-core >=2.18.8 (track upstream Ray releases),
 # or if the xl serverless pin moves to a Ray that already has it.
 GHSA-r7wm-3cxj-wff9
+
+# CVE-2026-69244 - aiohttp HIGH (fixed 3.14.3).
+#
+# The top-level aiohttp our stack actually imports is upgraded to 3.14.3 by a
+# floor in versions/_xl-base.txt, so that copy is clean. This suppression is
+# for a SECOND, stale copy Ray vendors inside its own runtime_env agent:
+#   opt/conda/lib/python3.13/site-packages/ray/_private/runtime_env/agent/thirdparty_files/aiohttp-3.14.1.dist-info
+# Same jar/vendored-copy situation as the jackson entries above (xl/xxl only,
+# via qiskit-serverless -> Ray): it is not a pip-installable package we can
+# upgrade — the fix only lands when Ray rebundles a patched aiohttp. This copy
+# powers Ray's internal runtime_env agent (dashboard/agent HTTP), which nothing
+# in these notebooks drives on untrusted input.
+#
+# Drop once Ray rebundles aiohttp >=3.14.3 (track upstream Ray releases), or if
+# the xl serverless pin moves to a Ray that already has it.
+CVE-2026-69244
