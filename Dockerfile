@@ -32,7 +32,7 @@ RUN if [[ "${QISKIT_VERSION}" == *-xl || "${QISKIT_VERSION}" == *-xxl || "${QISK
 # (a single ~250-byte text file) and the layer cache gets keyed on
 # ${QISKIT_VERSION} via the next RUN anyway.
 COPY versions /tmp/versions
-# Four in-image security upgrades, all for findings the base digest
+# Five in-image security upgrades, all for findings the base digest
 # 9388739d still ships and that have an available fix (so Trivy's
 # --ignore-unfixed gate flags them on every flavor):
 #
@@ -56,10 +56,14 @@ COPY versions /tmp/versions
 #    any requirements.txt); the floor is capped `<4.6` to take the patch on
 #    the shipped 4.5 line and avoid the 4.6 feature jump for the bundled
 #    jupyterlab-rise / -open-url-parameter extensions.
+#  - cryptography: CVE-2026-69247 (HIGH), base conda env ships 49.0.0,
+#    fixed in 50.0.0. cryptography is a base/transitive package (no
+#    requirements.txt pin); a base-layer finding so it hits every flavor
+#    incl. -small. Added 2026-08-06.
 #
 # Remove each once the base image ships past the respective fix.
 RUN pip install --no-cache-dir --no-compile -r /tmp/versions/${QISKIT_VERSION}/requirements.txt \
- && pip install --no-cache-dir --no-compile --upgrade 'jupyter-server>=2.20.0' 'msgpack>=1.2.1' 'mistune>=3.3.0' 'jupyterlab>=4.5.10,<4.6' \
+ && pip install --no-cache-dir --no-compile --upgrade 'jupyter-server>=2.20.0' 'msgpack>=1.2.1' 'mistune>=3.3.0' 'jupyterlab>=4.5.10,<4.6' 'cryptography>=50.0.0' \
  && rm -rf /tmp/versions \
  && fix-permissions "${CONDA_DIR}" \
  && fix-permissions "/home/${NB_USER}"
