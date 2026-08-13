@@ -117,3 +117,23 @@ GHSA-r7wm-3cxj-wff9
 # Drop once Ray rebundles aiohttp >=3.14.3 (track upstream Ray releases), or if
 # the xl serverless pin moves to a Ray that already has it.
 CVE-2026-69244
+
+# CVE-2026-54399 - Apache HttpCore5 HIGH (flagged httpcore5 5.0.2; fixed in
+# 5.4.3 / 5.5-beta2).
+#
+# Same jar and same situation as the jackson entries above: httpcore5 is a Java
+# HTTP library vendored *inside* Ray's distribution jar at
+#   opt/conda/lib/python3.13/site-packages/ray/jars/ray_dist.jar
+# (Trivy scans it as target type `jar`). Ray comes in transitively via
+# qiskit-serverless (~=0.30 in the xl requirements), so this is xl/xxl/rise
+# only — the -small flavors have no Ray and stayed green through the 08-13
+# nightly (18 of 34 jobs red, all xl/xxl/rise). It is not a pip-installable
+# package we can `pip upgrade`; the fix only lands when Ray rebundles a patched
+# httpcore5. The library serves Ray's JVM-side HTTP stack (Java workers /
+# cross-language calls), which nothing in these notebooks starts — the Python
+# Ray path we use never brings the JVM up, so the code is not merely
+# untrusted-input-free, it is never loaded.
+#
+# Drop once Ray rebundles httpcore5 >=5.4.3 (track upstream Ray releases), or if
+# the xl serverless pin moves to a Ray that already has it.
+CVE-2026-54399
