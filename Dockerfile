@@ -62,8 +62,30 @@ COPY versions /tmp/versions
 #    incl. -small. Added 2026-08-06.
 #
 # Remove each once the base image ships past the respective fix.
-RUN pip install --no-cache-dir --no-compile -r /tmp/versions/${QISKIT_VERSION}/requirements.txt \
- && pip install --no-cache-dir --no-compile --upgrade 'jupyter-server>=2.20.0' 'msgpack>=1.2.1' 'mistune>=3.3.0' 'jupyterlab>=4.5.10,<4.6' 'cryptography>=50.0.0' \
+# Both installs go through a retry wrapper. The xl/xxl wheelsets pull
+# several 40-80 MB binary wheels (ray, symengine, pyarrow, torch); when
+# the PyPI CDN drops one mid-body, pip aborts with
+#   ProtocolError: ('Connection broken: IncompleteRead(...)')
+# which pip's own --retries does NOT cover — that governs connection
+# setup and retryable HTTP statuses, not a truncated response body. On
+# 2026-08-15 (run 31864090452) a truncated symengine download failed the
+# 2.4-xxl arm64 build; the whole day's matrix was otherwise green.
+# Three attempts with linear backoff; the last one's output is the
+# error the build log shows.
+RUN pip_retry() { \
+      local attempt; \
+      for attempt in 1 2 3; do \
+        if pip install --no-cache-dir --no-compile "$@"; then return 0; fi; \
+        if [ "${attempt}" -lt 3 ]; then \
+          echo "pip attempt ${attempt} failed; retrying in $((attempt * 10))s" >&2; \
+          sleep $((attempt * 10)); \
+        fi; \
+      done; \
+      echo "pip failed after 3 attempts" >&2; \
+      return 1; \
+    }; \
+    pip_retry -r /tmp/versions/${QISKIT_VERSION}/requirements.txt \
+ && pip_retry --upgrade 'jupyter-server>=2.20.0' 'msgpack>=1.2.1' 'mistune>=3.3.0' 'jupyterlab>=4.5.10,<4.6' 'cryptography>=50.0.0' \
  && rm -rf /tmp/versions \
  && fix-permissions "${CONDA_DIR}" \
  && fix-permissions "/home/${NB_USER}"

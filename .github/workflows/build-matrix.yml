@@ -47,6 +47,7 @@ permissions:
   contents: write     # stub-branch force-pushes (main only)
   packages: write     # GHCR push (main only)
   id-token: write     # cosign keyless signing via OIDC
+  actions: read       # manifest job reads this run's per-arch build outcomes
 
 env:
   IMAGE: images
@@ -463,10 +464,10 @@ jobs:
     # failed (the manifest matrix would inherit the aggregate `needs`
     # state). On 2026-06-02 (run 26807520486) a single Docker Hub
     # timeout in one build job skipped all 13 manifest entries that
-    # day. The Combine per-arch tags step below already handles
-    # partial-arch availability (it only includes arches whose tags
-    # exist in GHCR), so a sibling build failure only voids that one
-    # version's manifest, not the other 12.
+    # day. The Combine per-arch tags step below decides per version
+    # whether it has a coherent set to publish (see its comment), so a
+    # sibling build failure only voids that one version's manifest, not
+    # the other 12.
     #
     # `always()` lets us run even when needs.build.result is failure;
     # `!cancelled()` still respects an explicit run cancellation.
@@ -523,18 +524,58 @@ jobs:
         env:
           REPO: ghcr.io/${{ steps.repo.outputs.owner_lc }}/${{ env.IMAGE }}
           VERSION: ${{ matrix.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          # A tag existing in GHCR does NOT mean this run built it: the
+          # per-arch tags are overwritten in place by every rebuild, so
+          # a failed build leaves the PREVIOUS run's image sitting under
+          # the same name. Combining on existence alone therefore mixes
+          # freshness silently — on 2026-08-15 (run 31864090452) the
+          # 2.4-xxl arm64 build failed on a truncated PyPI download and
+          # this step republished 2.4-xxl as today's amd64 + yesterday's
+          # arm64, and reported success. That quietly voids the whole
+          # point of the nightly rebuild (picking up base-image CVE
+          # fixes) for the arch that failed.
+          #
+          # So ask the run itself which arches actually succeeded, and
+          # treat "tag exists but wasn't built here" as fatal for this
+          # one version rather than publishing a mixed manifest.
+          gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.conclusion == "success") | .name' > /tmp/ok-jobs.txt
+
           sources=()
+          stale=()
           for arch in amd64 arm64; do
             tag="${REPO}:${VERSION}-${arch}"
-            if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
-              echo "Found $tag"
+            built=no
+            grep -Fxq "build ${VERSION} (${arch})" /tmp/ok-jobs.txt && built=yes
+            exists=no
+            docker buildx imagetools inspect "$tag" >/dev/null 2>&1 && exists=yes
+
+            if [ "$built" = yes ] && [ "$exists" = yes ]; then
+              echo "Found $tag (built in this run)"
               sources+=("$tag")
+            elif [ "$built" = yes ]; then
+              echo "$tag: build job succeeded but the tag is missing from GHCR." >&2
+              exit 1
+            elif [ "$exists" = yes ]; then
+              echo "$tag exists but was NOT built in this run (stale)."
+              stale+=("$arch")
             else
-              echo "Skipping $tag (not built)"
+              # First build of this version, or the arch has never
+              # published — nothing stale to confuse, just omit it.
+              echo "Skipping $tag (not built, no existing tag)"
             fi
           done
+
+          if [ ${#stale[@]} -gt 0 ]; then
+            echo "::error::${VERSION}: arch(es) ${stale[*]} failed to build in this run, but stale tags from an earlier run are still in GHCR. Refusing to publish a mixed-freshness manifest — leaving the existing ${VERSION} manifest untouched. Re-run once the build is fixed (workflow_dispatch with versions=${VERSION})."
+            exit 1
+          fi
           if [ ${#sources[@]} -eq 0 ]; then
             echo "No per-arch images found for $VERSION; failing." >&2
             exit 1
