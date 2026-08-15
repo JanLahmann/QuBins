@@ -36,7 +36,7 @@ qiskit-serverless~=0.30.0
 # supports serverless 0.31 yet; the latest mutually-consistent set is
 # catalog 0.14 + serverless 0.30 + runtime 0.45 (+ transpiler 0.18 in xxl).
 qiskit-ibm-catalog~=0.14.0
-qiskit-addon-sqd~=0.12.1
+qiskit-addon-sqd~=0.13.1
 qiskit-addon-utils~=0.3.1
 qiskit-addon-mpf~=0.3.0
 qiskit-addon-aqc-tensor[aer,quimb-jax]~=0.3.0; sys.platform != 'darwin'
