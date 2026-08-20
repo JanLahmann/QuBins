@@ -378,12 +378,65 @@ jobs:
           # 27875622108 even though the identical commit passed on its PR.
           # The flag bounds the scan generously without masking a real
           # hang (a genuinely stuck scan still fails at 15m).
-          trivy image \
-            --timeout 15m \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --exit-code 1 \
-            "$IMAGE_REF"
+          #
+          # Trivy's DB download is the flakiest part of this job, and
+          # `--db-repository` does NOT provide the failover its
+          # "in order of priority" help text implies: v0.70.0 aborts on
+          # the first repo's error instead of trying the next. Verified
+          # against the binary — a bogus primary with a valid ghcr.io
+          # secondary still dies with the same "1 error occurred"
+          # signature we got when mirror.gcr.io answered a runner with
+          # 403 Forbidden on 2026-08-20 (run 32331781162), failing
+          # 2.1-small amd64 with no CVE involved.
+          #
+          # So walk the mirrors here instead. The retry must never
+          # swallow a real CVE verdict, so the two outcomes are split by
+          # exit code:
+          #   1 = trivy error (DB download, registry, scan init) -> retry
+          #   2 = vulnerabilities found                          -> fail
+          # `--exit-code 2` is what makes that distinction possible.
+          # With the default 1 a findings verdict is indistinguishable
+          # from a network blip, so a retry loop would re-run the gate
+          # it is supposed to enforce. This also covers the Java DB
+          # (Ray's jars in xl/xxl), which has the same no-failover flaw
+          # and is fetched lazily mid-scan; pre-downloading it in every
+          # job would cost far more than retrying the rare failure.
+          attempt=0
+          for repos in \
+            "mirror.gcr.io/aquasec/trivy-db:2|mirror.gcr.io/aquasec/trivy-java-db:1" \
+            "ghcr.io/aquasecurity/trivy-db:2|ghcr.io/aquasecurity/trivy-java-db:1" \
+            "ghcr.io/aquasecurity/trivy-db:2|ghcr.io/aquasecurity/trivy-java-db:1"; do
+            attempt=$((attempt + 1))
+            rc=0
+            trivy image \
+              --timeout 15m \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 2 \
+              --db-repository "${repos%%|*}" \
+              --java-db-repository "${repos##*|}" \
+              "$IMAGE_REF" || rc=$?
+            case "${rc}" in
+              0)
+                echo "Trivy: no fixable HIGH/CRITICAL findings."
+                exit 0
+                ;;
+              2)
+                echo "::error::Trivy found fixable HIGH/CRITICAL vulnerabilities in ${IMAGE_REF}. Fix or suppress in .trivyignore before this image can publish."
+                exit 1
+                ;;
+              *)
+                if [ "${attempt}" -lt 3 ]; then
+                  echo "::warning::Trivy errored (rc=${rc}) on attempt ${attempt} via ${repos%%|*}; retrying."
+                  sleep $((attempt * 15))
+                else
+                  echo "::warning::Trivy errored (rc=${rc}) on final attempt ${attempt} via ${repos%%|*}."
+                fi
+                ;;
+            esac
+          done
+          echo "::error::Trivy failed to run after ${attempt} attempts (never reached a scan verdict)."
+          exit 1
 
       - name: Launch canary notebook inside the image
         env:
