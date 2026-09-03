@@ -32,7 +32,7 @@ RUN if [[ "${QISKIT_VERSION}" == *-xl || "${QISKIT_VERSION}" == *-xxl || "${QISK
 # (a single ~250-byte text file) and the layer cache gets keyed on
 # ${QISKIT_VERSION} via the next RUN anyway.
 COPY versions /tmp/versions
-# Five in-image security upgrades, all for findings the base digest
+# Six in-image security upgrades, all for findings the base digest
 # 9388739d still ships and that have an available fix (so Trivy's
 # --ignore-unfixed gate flags them on every flavor):
 #
@@ -60,6 +60,15 @@ COPY versions /tmp/versions
 #    fixed in 50.0.0. cryptography is a base/transitive package (no
 #    requirements.txt pin); a base-layer finding so it hits every flavor
 #    incl. -small. Added 2026-08-06.
+#  - tornado: CVE-2026-82397 (HIGH), base conda env ships 6.5.7, fixed in
+#    the 6.5.8 patch. tornado is a base/transitive package (no
+#    requirements.txt pin) pulled in by jupyter-server / jupyterlab /
+#    notebook / ipykernel / terminado; every one of them declares an
+#    open-ended `tornado>=6.x` with no upper cap, so the floor stays in
+#    range for all of them. A base-layer finding, so it hits every flavor
+#    incl. -small -- which is why it belongs here and not in
+#    versions/_xl-base.txt. Failed the whole 2026-09-03 nightly matrix
+#    (run 33732898839: all 34 build jobs). Added 2026-09-03.
 #
 # Remove each once the base image ships past the respective fix.
 # Both installs go through a retry wrapper. The xl/xxl wheelsets pull
@@ -85,7 +94,7 @@ RUN pip_retry() { \
       return 1; \
     }; \
     pip_retry -r /tmp/versions/${QISKIT_VERSION}/requirements.txt \
- && pip_retry --upgrade 'jupyter-server>=2.20.0' 'msgpack>=1.2.1' 'mistune>=3.3.0' 'jupyterlab>=4.5.10,<4.6' 'cryptography>=50.0.0' \
+ && pip_retry --upgrade 'jupyter-server>=2.20.0' 'msgpack>=1.2.1' 'mistune>=3.3.0' 'jupyterlab>=4.5.10,<4.6' 'cryptography>=50.0.0' 'tornado>=6.5.8' \
  && rm -rf /tmp/versions \
  && fix-permissions "${CONDA_DIR}" \
  && fix-permissions "/home/${NB_USER}"
