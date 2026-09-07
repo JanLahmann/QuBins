@@ -368,8 +368,52 @@ jobs:
           IMAGE_REF: ghcr.io/${{ steps.repo.outputs.owner_lc }}/${{ env.IMAGE }}:${{ matrix.version }}-${{ matrix.platform.arch }}
         run: |
           set -euo pipefail
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin v0.70.0
+          # Installing the binary is its own network dependency, and it is
+          # NOT covered by the scan retry further down: under `set -e` a
+          # failure here aborts the step before that loop is ever reached.
+          # On 2026-09-05 (run 33953811481) it did exactly that, failing
+          # 2.1-xl arm64 -- alone out of 34 build jobs -- with
+          #   trivy crit unable to find 'v0.70.0'
+          # while the same pinned tag installed fine in every sibling job
+          # and in the runs on either side of it.
+          #
+          # That message does not mean the release is gone. install.sh
+          # resolves the tag in github_release() by fetching
+          #   https://github.com/aquasecurity/trivy/releases/<tag>
+          # with `Accept:application/json` -- the github.com web endpoint,
+          # not api.github.com -- and treats an empty body as "not found":
+          #   json=$(http_copy "$giturl" "Accept:application/json")
+          #   test -z "$json" && return 1
+          # http_copy yields an empty string on any non-200, so a 5xx, a
+          # throttle, or a dropped connection is indistinguishable from a
+          # genuinely deleted tag. Because it is the web endpoint rather
+          # than the API, handing install.sh a GITHUB_TOKEN would not raise
+          # any rate limit -- retrying is the fix that actually applies.
+          #
+          # Three attempts with linear backoff, and confirm the binary
+          # actually runs so a truncated curl|sh (the script guards against
+          # this itself, see its own "cuts off the end" note) cannot pass
+          # as a success. A genuinely removed tag still fails all three and
+          # surfaces the same message -- this defers a real error, never
+          # hides one, and gates nothing security-relevant: the scan verdict
+          # downstream is what enforces the CVE policy.
+          install_trivy() {
+            local attempt
+            for attempt in 1 2 3; do
+              if curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+                   | sudo sh -s -- -b /usr/local/bin v0.70.0 \
+                 && trivy --version >/dev/null 2>&1; then
+                return 0
+              fi
+              if [ "${attempt}" -lt 3 ]; then
+                echo "::warning::Trivy install attempt ${attempt} failed; retrying in $((attempt * 10))s"
+                sleep $((attempt * 10))
+              fi
+            done
+            echo "::error::Trivy install failed after 3 attempts (could not fetch or run v0.70.0)."
+            return 1
+          }
+          install_trivy
           # Local image is single-platform (we built one), so no
           # --platform needed; trivy will find it via docker daemon.
           # --timeout 15m: the default is 5m, which the largest image
